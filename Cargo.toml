@@ -1,0 +1,19 @@
+[package]
+name = "tinykv"
+version = "0.1.0"
+edition = "2024"
+authors = ["Hasan YILDIZ <info@hasanyildiz.net>"]
+description = "A simple, file-backed, human-readable key-value store with TTL support"
+license = "MIT"
+homepage = "https://github.com/hsnyildiz/tinykv"
+repository = "https://github.com/hsnyildiz/tinykv"
+readme = "README.md"
+keywords = ["kv", "key-value", "storage", "json", "embedded", "simple"]
+categories = ["database", "data-structures", "filesystem", "config"]
+
+[dependencies]
+serde = { version =  "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3.20.0"
