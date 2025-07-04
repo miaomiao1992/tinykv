@@ -1,6 +1,6 @@
 [package]
 name = "tinykv"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 authors = ["Hasan YILDIZ <info@hasanyildiz.net>"]
 description = "A simple, file-backed, human-readable key-value store with TTL support"
