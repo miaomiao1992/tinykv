@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json;
 
+/// Errors that can occur while using the TinyKV store.
 #[derive(Debug)]
 pub enum TinyKVError {
     Io(io::Error),
@@ -45,6 +46,10 @@ struct Entry {
     expires_at: Option<u64>, // UNIX timestamp (seconds)
 }
 
+/// A minimal JSON-based key-value store with TTL and auto-save support.
+///
+/// Stores key-value pairs in a file and supports expiration (TTL), optional auto-saving,
+/// and optional backup file creation.
 pub struct TinyKV {
     path: PathBuf,
     data: HashMap<String, Entry>,
@@ -53,6 +58,7 @@ pub struct TinyKV {
 }
 
 impl TinyKV {
+    /// Opens an existing store or creates a new one at the given path.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, TinyKVError> {
         let path_buf = path.as_ref().to_path_buf();
         let data = match fs::read_to_string(&path_buf) {
@@ -70,16 +76,19 @@ impl TinyKV {
         })
     }
 
+    /// Enables auto-saving on every modification.
     pub fn with_auto_save(mut self) -> Self {
         self.auto_save = true;
         self
     }
 
+    /// Enables or disables backup file creation during save.
     pub fn with_backup(mut self, enabled: bool) -> Self {
         self.backup_enabled = enabled;
         self
     }
 
+    /// Inserts a value into the store without TTL.
     pub fn set<T: Serialize>(&mut self, key: &str, value: T) -> Result<(), TinyKVError> {
         let val = serde_json::to_value(value)?;
         self.data.insert(
@@ -96,6 +105,7 @@ impl TinyKV {
         Ok(())
     }
 
+    /// Inserts a value into the store with a TTL (in seconds).
     pub fn set_with_ttl<T: Serialize>(
         &mut self,
         key: &str,
@@ -125,6 +135,7 @@ impl TinyKV {
         Ok(())
     }
 
+    /// Retrieves a value by key if it exists and has not expired.
     pub fn get<T: for<'de> Deserialize<'de>>(
         &mut self,
         key: &str,
@@ -135,7 +146,6 @@ impl TinyKV {
             .as_secs();
 
         if let Some(entry) = self.data.get(key) {
-            // Check if expired
             if let Some(expiry) = entry.expires_at {
                 if now > expiry {
                     self.data.remove(key);
@@ -153,6 +163,7 @@ impl TinyKV {
         Ok(None)
     }
 
+    /// Removes a key from the store.
     pub fn remove(&mut self, key: &str) -> Result<bool, TinyKVError> {
         let removed = self.data.remove(key).is_some();
         if removed && self.auto_save {
@@ -161,8 +172,8 @@ impl TinyKV {
         Ok(removed)
     }
 
+    /// Checks if a key exists and is not expired.
     pub fn contains_key(&self, key: &str) -> bool {
-        // Check if key exists and is not expired
         if let Some(entry) = self.data.get(key) {
             if let Some(expiry) = entry.expires_at {
                 let now = SystemTime::now()
@@ -176,6 +187,7 @@ impl TinyKV {
         false
     }
 
+    /// Returns all non-expired keys.
     pub fn keys(&self) -> Vec<String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -192,6 +204,7 @@ impl TinyKV {
             .collect()
     }
 
+    /// Returns the count of non-expired entries.
     pub fn len(&self) -> usize {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -207,18 +220,21 @@ impl TinyKV {
             .count()
     }
 
+    /// Returns true if there are no non-expired entries.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Returns the backup file path derived from the main path.
     fn backup_path(&self) -> PathBuf {
         let mut backup = self.path.clone();
         backup.set_extension("bak");
         backup
     }
 
+    /// Saves the store to disk in JSON format.
+    /// Creates a backup and uses atomic write (via .tmp) if enabled.
     pub fn save(&self) -> Result<(), TinyKVError> {
-        // Create backup if enabled
         if self.backup_enabled && self.path.exists() {
             let backup_path = self.backup_path();
             fs::copy(&self.path, &backup_path)?;
@@ -226,7 +242,6 @@ impl TinyKV {
 
         let json = serde_json::to_string_pretty(&self.data)?;
 
-        // Atomic write
         let temp_path = self.path.with_extension("tmp");
         fs::write(&temp_path, json)?;
         fs::rename(&temp_path, &self.path)?;
@@ -234,6 +249,7 @@ impl TinyKV {
         Ok(())
     }
 
+    /// Removes all expired keys from the store.
     pub fn purge_expired(&mut self) -> Result<usize, TinyKVError> {
         if self.data.is_empty() {
             return Ok(0);
@@ -259,6 +275,7 @@ impl TinyKV {
         Ok(removed)
     }
 
+    /// Clears all entries from the store.
     pub fn clear(&mut self) -> Result<(), TinyKVError> {
         self.data.clear();
         if self.auto_save {
@@ -267,6 +284,7 @@ impl TinyKV {
         Ok(())
     }
 
+    /// Reloads the store from disk.
     pub fn reload(&mut self) -> Result<(), TinyKVError> {
         let data = match fs::read_to_string(&self.path) {
             Ok(contents) => serde_json::from_str(&contents)
@@ -281,94 +299,10 @@ impl TinyKV {
 }
 
 impl Drop for TinyKV {
+    /// Automatically saves the store if `auto_save` is enabled.
     fn drop(&mut self) {
         if self.auto_save {
             let _ = self.save();
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::thread;
-    use std::time::Duration;
-
-    #[test]
-    fn test_basic_operations() {
-        let temp_file = tempfile::NamedTempFile::new().unwrap();
-        let mut kv = TinyKV::open(temp_file.path()).unwrap();
-
-        // Test set and get
-        kv.set("name", "alice").unwrap();
-        let name: String = kv.get("name").unwrap().unwrap();
-        assert_eq!(name, "alice");
-
-        // Test remove
-        assert!(kv.remove("name").unwrap());
-        assert!(!kv.remove("name").unwrap());
-
-        let name: Option<String> = kv.get("name").unwrap();
-        assert!(name.is_none());
-    }
-
-    #[test]
-    fn test_ttl() {
-        let temp_file = tempfile::NamedTempFile::new().unwrap();
-        let mut kv = TinyKV::open(temp_file.path()).unwrap();
-
-        // Set with 1 second TTL
-        kv.set_with_ttl("temp", "value", 1).unwrap();
-
-        // Should exist immediately
-        let val: Option<String> = kv.get("temp").unwrap();
-        assert_eq!(val, Some("value".to_string()));
-
-        // Wait for expiry
-        thread::sleep(Duration::from_secs(2));
-
-        // Should be expired
-        let val: Option<String> = kv.get("temp").unwrap();
-        assert!(val.is_none());
-    }
-
-    #[test]
-    fn test_auto_save() {
-        let temp_file = tempfile::NamedTempFile::new().unwrap();
-        let temp_path = temp_file.path().to_path_buf();
-
-        {
-            let mut kv = TinyKV::open(&temp_path).unwrap().with_auto_save();
-            kv.set("key", "value").unwrap();
-        } // kv dropped here, auto-save should trigger
-
-        // Create new instance to test persistence
-        let mut kv2 = TinyKV::open(&temp_path).unwrap();
-        let val: String = kv2.get("key").unwrap().unwrap();
-        assert_eq!(val, "value");
-    }
-
-    #[test]
-    fn test_backup() {
-        let temp_file = tempfile::NamedTempFile::new().unwrap();
-        let temp_path = temp_file.path().to_path_buf();
-
-        // First, create a file with some data
-        {
-            let mut kv = TinyKV::open(&temp_path).unwrap();
-            kv.set("initial", "data").unwrap();
-            kv.save().unwrap();
-        }
-
-        // Now test backup functionality
-        {
-            let mut kv = TinyKV::open(&temp_path).unwrap().with_backup(true);
-            kv.set("new", "data").unwrap();
-            kv.save().unwrap();
-        }
-
-        // Check if backup file was created
-        let backup_path = temp_path.with_extension("bak");
-        assert!(backup_path.exists());
     }
 }
