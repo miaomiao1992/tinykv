@@ -1,4 +1,7 @@
 # tinykv
+[![Crates.io](https://img.shields.io/crates/v/tinykv.svg)](https://crates.io/crates/tinykv)
+[![Downloads](https://img.shields.io/crates/d/tinykv.svg)](https://crates.io/crates/tinykv)
+
 
 **🪶 A minimal file-backed key-value store for Rust.**
 
