@@ -8,7 +8,7 @@ license = "MIT"
 homepage = "https://github.com/hsnyildiz/tinykv"
 repository = "https://github.com/hsnyildiz/tinykv"
 readme = "README.md"
-keywords = ["kv", "key-value", "storage", "json", "embedded", "simple"]
+keywords = ["key-value", "storage", "json", "embedded", "simple"]
 categories = ["database", "data-structures", "filesystem", "config", "embedded"]
 
 [dependencies]
