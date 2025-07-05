@@ -175,13 +175,14 @@ impl TinyKV {
 
         if let Some(entry) = self.data.get(key) {
             if let Some(expiry) = entry.expires_at
-                && now > expiry {
-                    self.data.remove(key);
-                    if self.auto_save {
-                        self.save()?;
-                    }
-                    return Ok(None);
+                && now > expiry
+            {
+                self.data.remove(key);
+                if self.auto_save {
+                    self.save()?;
                 }
+                return Ok(None);
+            }
 
             let value = serde_json::from_value(entry.value.clone())?;
             return Ok(Some(value));
