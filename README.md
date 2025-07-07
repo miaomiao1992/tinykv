@@ -62,6 +62,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+The file looks like this:
+```json
+{
+  "theme": {
+    "value": "dark",
+    "expires_at": null
+  },
+  "session": {
+    "value": "abc123", 
+    "expires_at": 1721234567
+  }
+}
+```
+
 ### Embedded/WASM usage (no_std)
 
 ```rust
@@ -84,20 +99,6 @@ fn embedded_main() -> Result<(), tinykv::TinyKVError> {
     let device_id = kv2.get("device_id");
     
     Ok(())
-}
-```
-
-The file looks like this:
-```json
-{
-  "theme": {
-    "value": "dark",
-    "expires_at": null
-  },
-  "session": {
-    "value": "abc123", 
-    "expires_at": 1721234567
-  }
 }
 ```
 
