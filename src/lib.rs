@@ -2,6 +2,7 @@
 //!
 //! A minimal JSON-based persistent key-value store for Rust projects.
 //! Supports optional TTL (expiration), auto-saving, backup, and serialization via `serde` or `nanoserde`.
+//! Works in `no_std` environments with `alloc`.
 //!
 //! ## Features
 //! - File-based storage using pretty-formatted JSON
@@ -9,16 +10,19 @@
 //! - Auto-saving changes on modification
 //! - Backup support with `.bak` files
 //! - Simple interface with `serde` (default) or `nanoserde` (feature flag)
+//! - `no_std` support with `alloc`
 //!
 //! ## Feature Flags
-//! - `default`: Uses `serde` for serialization (maximum compatibility)
+//! - `default`: Uses `serde` for serialization (maximum compatibility) and `std`
 //! - `nanoserde`: Uses `nanoserde` for minimal binary size and faster compilation
+//! - `std`: Enables `std` library (enabled by default)
 //!
 //! ## Example
 //!
 //! ```rust
 //! use tinykv::TinyKV;
 //!
+//! # #[cfg(feature = "std")]
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let mut kv = TinyKV::open("mydata.json")?.with_auto_save();
 //!     kv.set("username", "hasan".to_string())?;
@@ -27,55 +31,104 @@
 //!     println!("User: {:?}", user);
 //!     Ok(())
 //! }
+//!
+//! # #[cfg(not(feature = "std"))]
+//! # fn main() -> Result<(), tinykv::TinyKVError> {
+//! #     let mut kv = TinyKV::new();
+//! #     kv.set("username", "hasan".to_string())?;
+//! #     let user: Option<String> = kv.get("username")?;
+//! #     println!("User: {:?}", user);
+//! #     Ok(())
+//! # }
 //! ```
 
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg(not(feature = "std"))]
+extern crate alloc;
+
+#[cfg(all(not(feature = "std"), feature = "nanoserde"))]
+use alloc::{
+    collections::BTreeMap,
+    string::{String, ToString},
+    vec::Vec,
+};
+
+#[cfg(all(not(feature = "std"), not(feature = "nanoserde")))]
+use alloc::{
+    collections::BTreeMap,
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
+
+#[cfg(feature = "std")]
 use std::collections::HashMap;
+
+#[cfg(feature = "std")]
 use std::fs;
+
+#[cfg(feature = "std")]
 use std::io::{self, ErrorKind};
+
+#[cfg(feature = "std")]
 use std::path::{Path, PathBuf};
+
+#[cfg(feature = "std")]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // Conditional imports based on feature flags
 #[cfg(feature = "nanoserde")]
 use nanoserde::{DeJson, SerJson};
 
-#[cfg(not(feature = "nanoserde"))]
+#[cfg(all(not(feature = "nanoserde"), feature = "std"))]
 use serde::{Deserialize, Serialize};
 
 /// Errors that can occur while using the TinyKV store.
 #[derive(Debug)]
 pub enum TinyKVError {
-    /// File system related error
+    /// File system related error (only available with std)
+    #[cfg(feature = "std")]
     Io(io::Error),
     /// Serialization or deserialization failure
     Serialization(String),
-    /// System time is before the UNIX epoch
+    /// System time is before the UNIX epoch (only available with std)
+    #[cfg(feature = "std")]
     TimeError,
+    /// Feature not available in no_std mode
+    #[cfg(not(feature = "std"))]
+    NoStdUnsupported(String),
 }
 
+#[cfg(feature = "std")]
 impl From<io::Error> for TinyKVError {
     fn from(err: io::Error) -> Self {
         Self::Io(err)
     }
 }
 
-#[cfg(not(feature = "nanoserde"))]
+#[cfg(all(not(feature = "nanoserde"), feature = "std"))]
 impl From<serde_json::Error> for TinyKVError {
     fn from(err: serde_json::Error) -> Self {
         Self::Serialization(err.to_string())
     }
 }
 
-impl std::fmt::Display for TinyKVError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for TinyKVError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            #[cfg(feature = "std")]
             Self::Io(e) => write!(f, "IO error: {e}"),
             Self::Serialization(e) => write!(f, "Serialization error: {e}"),
+            #[cfg(feature = "std")]
             Self::TimeError => write!(f, "Time error"),
+            #[cfg(not(feature = "std"))]
+            Self::NoStdUnsupported(msg) => write!(f, "Feature not available in no_std: {msg}"),
         }
     }
 }
 
+#[cfg(feature = "std")]
 impl std::error::Error for TinyKVError {}
 
 // Entry struct with conditional serialization
@@ -87,7 +140,7 @@ struct Entry {
     expires_at: Option<u64>, // UNIX timestamp (seconds)
 }
 
-#[cfg(not(feature = "nanoserde"))]
+#[cfg(all(not(feature = "nanoserde"), feature = "std"))]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Entry {
     value: serde_json::Value,
@@ -95,19 +148,34 @@ struct Entry {
     expires_at: Option<u64>, // UNIX timestamp (seconds)
 }
 
+// For no_std without nanoserde, we use a simpler approach
+#[cfg(all(not(feature = "nanoserde"), not(feature = "std")))]
+#[derive(Debug, Clone)]
+struct Entry {
+    value: String,           // Simple string storage for no_std
+    expires_at: Option<u64>, // UNIX timestamp (seconds)
+}
+
 /// A simple persistent key-value store with TTL and auto-save.
 ///
 /// Values are stored in JSON format and must implement serialization traits.
 /// Uses `serde` by default, or `nanoserde` when the feature flag is enabled.
+/// In `no_std` mode, some features like file I/O are not available.
 pub struct TinyKV {
+    #[cfg(feature = "std")]
     path: PathBuf,
+    #[cfg(feature = "std")]
     data: HashMap<String, Entry>,
+    #[cfg(not(feature = "std"))]
+    data: BTreeMap<String, Entry>,
     auto_save: bool,
     backup_enabled: bool,
 }
 
 impl TinyKV {
     /// Open or create a TinyKV store at the given file path.
+    /// Only available with `std` feature.
+    #[cfg(feature = "std")]
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, TinyKVError> {
         let path_buf = path.as_ref().to_path_buf();
         let data = match fs::read_to_string(&path_buf) {
@@ -124,20 +192,56 @@ impl TinyKV {
         })
     }
 
+    /// Create a new in-memory TinyKV store.
+    /// Available in both `std` and `no_std` modes.
+    pub fn new() -> Self {
+        Self {
+            #[cfg(feature = "std")]
+            path: PathBuf::new(),
+            #[cfg(feature = "std")]
+            data: HashMap::new(),
+            #[cfg(not(feature = "std"))]
+            data: BTreeMap::new(),
+            auto_save: false,
+            backup_enabled: false,
+        }
+    }
+
+    /// Create a TinyKV store from serialized data.
+    /// Available in both `std` and `no_std` modes.
+    pub fn from_data(data: &str) -> Result<Self, TinyKVError> {
+        let data = Self::deserialize_data(data)?;
+        Ok(Self {
+            #[cfg(feature = "std")]
+            path: PathBuf::new(),
+            data,
+            auto_save: false,
+            backup_enabled: false,
+        })
+    }
+
+    /// Serialize the store to a string.
+    /// Available in both `std` and `no_std` modes.
+    pub fn to_data(&self) -> Result<String, TinyKVError> {
+        self.serialize_data()
+    }
+
     /// Enables auto-saving after every set/remove operation.
+    /// Only effective with `std` feature.
     pub fn with_auto_save(mut self) -> Self {
         self.auto_save = true;
         self
     }
 
     /// Enables or disables file backup before saving.
+    /// Only effective with `std` feature.
     pub fn with_backup(mut self, enabled: bool) -> Self {
         self.backup_enabled = enabled;
         self
     }
 
     // Helper method for serialization
-    #[cfg(not(feature = "nanoserde"))]
+    #[cfg(all(not(feature = "nanoserde"), feature = "std"))]
     fn serialize_data(&self) -> Result<String, TinyKVError> {
         serde_json::to_string_pretty(&self.data).map_err(Into::into)
     }
@@ -147,8 +251,35 @@ impl TinyKV {
         Ok(self.data.serialize_json())
     }
 
+    #[cfg(all(not(feature = "nanoserde"), not(feature = "std")))]
+    fn serialize_data(&self) -> Result<String, TinyKVError> {
+        // Simple JSON serialization for no_std
+        let mut result = String::from("{");
+        let mut first = true;
+
+        for (key, entry) in &self.data {
+            if !first {
+                result.push(',');
+            }
+            first = false;
+
+            result.push_str(&format!(
+                r#""{}":{{"value":"{}","expires_at":{}}}"#,
+                key,
+                entry.value,
+                match entry.expires_at {
+                    Some(exp) => exp.to_string(),
+                    None => "null".to_string(),
+                }
+            ));
+        }
+
+        result.push('}');
+        Ok(result)
+    }
+
     // Helper method for deserialization
-    #[cfg(not(feature = "nanoserde"))]
+    #[cfg(all(not(feature = "nanoserde"), feature = "std"))]
     fn deserialize_data(contents: &str) -> Result<HashMap<String, Entry>, TinyKVError> {
         if contents.trim().is_empty() {
             return Ok(HashMap::new());
@@ -157,7 +288,7 @@ impl TinyKV {
             .map_err(|e| TinyKVError::Io(io::Error::new(ErrorKind::InvalidData, e)))
     }
 
-    #[cfg(feature = "nanoserde")]
+    #[cfg(all(feature = "nanoserde", feature = "std"))]
     fn deserialize_data(contents: &str) -> Result<HashMap<String, Entry>, TinyKVError> {
         if contents.trim().is_empty() {
             return Ok(HashMap::new());
@@ -166,8 +297,42 @@ impl TinyKV {
             .map_err(|e| TinyKVError::Serialization(e.to_string()))
     }
 
+    #[cfg(all(feature = "nanoserde", not(feature = "std")))]
+    fn deserialize_data(contents: &str) -> Result<BTreeMap<String, Entry>, TinyKVError> {
+        if contents.trim().is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        BTreeMap::<String, Entry>::deserialize_json(contents)
+            .map_err(|e| TinyKVError::Serialization(e.to_string()))
+    }
+
+    #[cfg(all(not(feature = "nanoserde"), not(feature = "std")))]
+    fn deserialize_data(_contents: &str) -> Result<BTreeMap<String, Entry>, TinyKVError> {
+        // Simple deserialization for no_std (basic implementation)
+        // In practice, you'd want a proper JSON parser here
+        Err(TinyKVError::NoStdUnsupported(
+            "JSON deserialization not implemented for no_std without nanoserde".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "std")]
+    fn current_timestamp() -> Result<u64, TinyKVError> {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| TinyKVError::TimeError)
+            .map(|d| d.as_secs())
+    }
+
+    #[cfg(not(feature = "std"))]
+    #[allow(dead_code)]
+    fn current_timestamp() -> Result<u64, TinyKVError> {
+        Err(TinyKVError::NoStdUnsupported(
+            "System time not available in no_std".to_string(),
+        ))
+    }
+
     /// Inserts a key with a value (without expiration).
-    #[cfg(not(feature = "nanoserde"))]
+    #[cfg(all(not(feature = "nanoserde"), feature = "std"))]
     pub fn set<T: Serialize>(&mut self, key: &str, value: T) -> Result<(), TinyKVError> {
         let val = serde_json::to_value(value)?;
         self.data.insert(
@@ -195,14 +360,27 @@ impl TinyKV {
             },
         );
 
+        #[cfg(feature = "std")]
         if self.auto_save {
             self.save()?;
         }
         Ok(())
     }
 
+    #[cfg(all(not(feature = "nanoserde"), not(feature = "std")))]
+    pub fn set(&mut self, key: &str, value: &str) -> Result<(), TinyKVError> {
+        self.data.insert(
+            key.to_string(),
+            Entry {
+                value: value.to_string(),
+                expires_at: None,
+            },
+        );
+        Ok(())
+    }
+
     /// Inserts a key with value and expiration (TTL in seconds).
-    #[cfg(not(feature = "nanoserde"))]
+    #[cfg(all(not(feature = "nanoserde"), feature = "std"))]
     pub fn set_with_ttl<T: Serialize>(
         &mut self,
         key: &str,
@@ -210,13 +388,7 @@ impl TinyKV {
         ttl_secs: u64,
     ) -> Result<(), TinyKVError> {
         let val = serde_json::to_value(value)?;
-        let expires_at = Some(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|_| TinyKVError::TimeError)?
-                .as_secs()
-                + ttl_secs,
-        );
+        let expires_at = Some(Self::current_timestamp()? + ttl_secs);
 
         self.data.insert(
             key.to_string(),
@@ -240,13 +412,7 @@ impl TinyKV {
         ttl_secs: u64,
     ) -> Result<(), TinyKVError> {
         let json_str = value.serialize_json();
-        let expires_at = Some(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|_| TinyKVError::TimeError)?
-                .as_secs()
-                + ttl_secs,
-        );
+        let expires_at = Some(Self::current_timestamp()? + ttl_secs);
 
         self.data.insert(
             key.to_string(),
@@ -256,22 +422,31 @@ impl TinyKV {
             },
         );
 
+        #[cfg(feature = "std")]
         if self.auto_save {
             self.save()?;
         }
         Ok(())
     }
 
+    #[cfg(all(not(feature = "nanoserde"), not(feature = "std")))]
+    pub fn set_with_ttl(
+        &mut self,
+        key: &str,
+        value: &str,
+        _ttl_secs: u64,
+    ) -> Result<(), TinyKVError> {
+        // TTL not supported in no_std without time
+        self.set(key, value)
+    }
+
     /// Retrieves the value for a given key if it exists and hasn't expired.
-    #[cfg(not(feature = "nanoserde"))]
+    #[cfg(all(not(feature = "nanoserde"), feature = "std"))]
     pub fn get<T: for<'de> Deserialize<'de>>(
         &mut self,
         key: &str,
     ) -> Result<Option<T>, TinyKVError> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| TinyKVError::TimeError)?
-            .as_secs();
+        let now = Self::current_timestamp()?;
 
         if let Some(entry) = self.data.get(key) {
             if let Some(expiry) = entry.expires_at {
@@ -293,12 +468,11 @@ impl TinyKV {
 
     #[cfg(feature = "nanoserde")]
     pub fn get<T: DeJson>(&mut self, key: &str) -> Result<Option<T>, TinyKVError> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| TinyKVError::TimeError)?
-            .as_secs();
+        #[cfg(feature = "std")]
+        let now = Self::current_timestamp()?;
 
         if let Some(entry) = self.data.get(key) {
+            #[cfg(feature = "std")]
             if let Some(expiry) = entry.expires_at {
                 if now > expiry {
                     self.data.remove(key);
@@ -317,23 +491,29 @@ impl TinyKV {
         Ok(None)
     }
 
+    #[cfg(all(not(feature = "nanoserde"), not(feature = "std")))]
+    pub fn get(&self, key: &str) -> Option<String> {
+        self.data.get(key).map(|entry| entry.value.clone())
+    }
+
     /// Removes a key from the store.
     pub fn remove(&mut self, key: &str) -> Result<bool, TinyKVError> {
         let removed = self.data.remove(key).is_some();
+
+        #[cfg(feature = "std")]
         if removed && self.auto_save {
             self.save()?;
         }
+
         Ok(removed)
     }
 
     /// Checks if the store contains a given key and it's not expired.
     pub fn contains_key(&self, key: &str) -> bool {
-        if let Some(entry) = self.data.get(key) {
-            if let Some(expiry) = entry.expires_at {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
+        if let Some(_entry) = self.data.get(key) {
+            #[cfg(feature = "std")]
+            if let Some(expiry) = _entry.expires_at {
+                let now = Self::current_timestamp().unwrap_or(0);
                 return now <= expiry;
             }
             return true;
@@ -343,16 +523,19 @@ impl TinyKV {
 
     /// Returns a list of all unexpired keys in the store.
     pub fn keys(&self) -> Vec<String> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        #[cfg(feature = "std")]
+        let now = Self::current_timestamp().unwrap_or(0);
 
         self.data
             .iter()
-            .filter(|(_, entry)| match entry.expires_at {
-                Some(expiry) => now <= expiry,
-                None => true,
+            .filter(|(_, _entry)| {
+                #[cfg(feature = "std")]
+                match _entry.expires_at {
+                    Some(expiry) => now <= expiry,
+                    None => true,
+                }
+                #[cfg(not(feature = "std"))]
+                true
             })
             .map(|(k, _)| k.clone())
             .collect()
@@ -360,16 +543,19 @@ impl TinyKV {
 
     /// Returns number of unexpired entries.
     pub fn len(&self) -> usize {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        #[cfg(feature = "std")]
+        let now = Self::current_timestamp().unwrap_or(0);
 
         self.data
             .iter()
-            .filter(|(_, entry)| match entry.expires_at {
-                Some(expiry) => now <= expiry,
-                None => true,
+            .filter(|(_, _entry)| {
+                #[cfg(feature = "std")]
+                match _entry.expires_at {
+                    Some(expiry) => now <= expiry,
+                    None => true,
+                }
+                #[cfg(not(feature = "std"))]
+                true
             })
             .count()
     }
@@ -380,6 +566,8 @@ impl TinyKV {
     }
 
     /// Save contents to disk. Creates a `.bak` file if backup is enabled.
+    /// Only available with `std` feature.
+    #[cfg(feature = "std")]
     pub fn save(&self) -> Result<(), TinyKVError> {
         if self.backup_enabled && self.path.exists() {
             let backup_path = self.path.with_extension("bak");
@@ -395,41 +583,49 @@ impl TinyKV {
     }
 
     /// Removes all expired entries from memory.
+    /// TTL checking only available with `std` feature.
     pub fn purge_expired(&mut self) -> Result<usize, TinyKVError> {
         if self.data.is_empty() {
             return Ok(0);
         }
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| TinyKVError::TimeError)?
-            .as_secs();
+        #[cfg(feature = "std")]
+        {
+            let now = Self::current_timestamp()?;
+            let before = self.data.len();
+            self.data.retain(|_, entry| match entry.expires_at {
+                Some(expiry) => now <= expiry,
+                None => true,
+            });
 
-        let before = self.data.len();
-        self.data.retain(|_, entry| match entry.expires_at {
-            Some(expiry) => now <= expiry,
-            None => true,
-        });
+            let removed = before - self.data.len();
 
-        let removed = before - self.data.len();
+            if removed > 0 && self.auto_save {
+                self.save()?;
+            }
 
-        if removed > 0 && self.auto_save {
-            self.save()?;
+            Ok(removed)
         }
 
-        Ok(removed)
+        #[cfg(not(feature = "std"))]
+        Ok(0) // No TTL support in no_std
     }
 
     /// Clears all entries from memory.
     pub fn clear(&mut self) -> Result<(), TinyKVError> {
         self.data.clear();
+
+        #[cfg(feature = "std")]
         if self.auto_save {
             self.save()?;
         }
+
         Ok(())
     }
 
     /// Reloads the store contents from disk.
+    /// Only available with `std` feature.
+    #[cfg(feature = "std")]
     pub fn reload(&mut self) -> Result<(), TinyKVError> {
         let data = match fs::read_to_string(&self.path) {
             Ok(contents) => Self::deserialize_data(&contents)?,
@@ -442,6 +638,13 @@ impl TinyKV {
     }
 }
 
+impl Default for TinyKV {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "std")]
 impl Drop for TinyKV {
     fn drop(&mut self) {
         if self.auto_save {
@@ -454,6 +657,72 @@ impl Drop for TinyKV {
 mod tests {
     use super::*;
 
+    #[test]
+    fn test_no_std_basic_operations() {
+        // Test basic operations in no_std mode
+        #[cfg(all(not(feature = "nanoserde"), not(feature = "std")))]
+        {
+            let mut kv = TinyKV::new();
+            kv.set("name", "alice").unwrap();
+            let name = kv.get("name").unwrap();
+            assert_eq!(name, "alice");
+
+            assert!(kv.remove("name").unwrap());
+            assert!(!kv.remove("name").unwrap());
+
+            let name = kv.get("name");
+            assert!(name.is_none());
+        }
+
+        #[cfg(feature = "nanoserde")]
+        {
+            let mut kv = TinyKV::new();
+            kv.set("name", "alice".to_string()).unwrap();
+            let name: String = kv.get("name").unwrap().unwrap();
+            assert_eq!(name, "alice");
+        }
+
+        #[cfg(all(feature = "std", not(feature = "nanoserde")))]
+        {
+            let mut kv = TinyKV::new();
+            kv.set("name", "alice").unwrap();
+            let name: String = kv.get("name").unwrap().unwrap();
+            assert_eq!(name, "alice");
+        }
+    }
+
+    #[test]
+    fn test_serialization() {
+        #[cfg(feature = "nanoserde")]
+        {
+            let mut kv = TinyKV::new();
+            kv.set("test", "value".to_string()).unwrap();
+            let serialized = kv.to_data().unwrap();
+            assert!(serialized.contains("test"));
+            assert!(serialized.contains("value"));
+        }
+
+        #[cfg(all(feature = "std", not(feature = "nanoserde")))]
+        {
+            let mut kv = TinyKV::new();
+            kv.set("test", "value").unwrap();
+            let serialized = kv.to_data().unwrap();
+            assert!(serialized.contains("test"));
+            assert!(serialized.contains("value"));
+        }
+
+        #[cfg(all(not(feature = "std"), not(feature = "nanoserde")))]
+        {
+            let mut kv = TinyKV::new();
+            kv.set("test", "value").unwrap();
+            // Simple JSON serialization should work in pure no_std mode
+            let serialized = kv.to_data().unwrap();
+            assert!(serialized.contains("test"));
+            assert!(serialized.contains("value"));
+        }
+    }
+
+    #[cfg(feature = "std")]
     #[test]
     fn test_basic_operations() {
         let temp_file = tempfile::NamedTempFile::new().unwrap();
@@ -472,6 +741,7 @@ mod tests {
         assert!(name.is_none());
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn test_ttl() {
         let temp_file = tempfile::NamedTempFile::new().unwrap();
@@ -492,6 +762,7 @@ mod tests {
         assert!(val.is_none());
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn test_auto_save() {
         let temp_file = tempfile::NamedTempFile::new().unwrap();
@@ -508,6 +779,7 @@ mod tests {
         assert_eq!(val, "value");
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn test_backup() {
         let temp_file = tempfile::NamedTempFile::new().unwrap();

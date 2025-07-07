@@ -1,6 +1,6 @@
 [package]
 name = "tinykv"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Hasan YILDIZ <info@hasanyildiz.net>"]
 description = "A simple, file-backed, human-readable key-value store with TTL support"
@@ -17,8 +17,9 @@ serde = { version =  "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 
 [features]
-default = ["serde"]
-serde = ["dep:serde", "dep:serde_json"]
+default = ["std", "serde"]
+std = []
+serde = ["dep:serde", "dep:serde_json", "std"]
 nanoserde = ["dep:nanoserde"]
 
 [dev-dependencies]
