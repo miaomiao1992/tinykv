@@ -2,7 +2,7 @@
 [![Crates.io](https://img.shields.io/crates/v/tinykv.svg)](https://crates.io/crates/tinykv)
 [![Downloads](https://img.shields.io/crates/d/tinykv.svg)](https://crates.io/crates/tinykv)
 
-A minimal file-backed key-value store for Rust.
+A minimal file-backed key-value store for Rust with no_std support.
 
 ## Why I built this
 
@@ -22,21 +22,29 @@ So I built tinykv - the simple KV store I wish existed. Turns out other Rust dev
 - Auto-save and backup options
 - Atomic writes (no corruption)
 - Simple serde integration
+- no_std support for embedded systems
+- Works in WASM environments
 
 ## Feature Flags
 
 - **default**: Uses `serde` for maximum compatibility
+- **std**: Enables standard library features (file I/O, TTL)
 - **nanoserde**: Uses `nanoserde` for smaller binaries and faster compilation
 
 ## Usage
 
 ```toml
-# Default (serde)
-tinykv = "0.2"
+# Default (std + serde)
+tinykv = "0.3"
 
-# Minimal (nanoserde)
-tinykv = { version = "0.2", default-features = false, features = ["nanoserde"] }
+# Embedded systems (no_std + nanoserde)
+tinykv = { version = "0.3", default-features = false, features = ["nanoserde"] }
+
+# Ultra-minimal (pure no_std)
+tinykv = { version = "0.3", default-features = false }
 ```
+
+### Standard usage (with file I/O)
 
 ```rust
 use tinykv::TinyKV;
@@ -50,6 +58,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let theme: String = kv.get("theme")?.unwrap_or("light".to_string());
     println!("Using {} theme", theme);
+    
+    Ok(())
+}
+```
+### Embedded/WASM usage (no_std)
+
+```rust
+#![no_std]
+extern crate alloc;
+use tinykv::TinyKV;
+
+fn embedded_main() -> Result<(), tinykv::TinyKVError> {
+    let mut kv = TinyKV::new(); // In-memory store
+    
+    kv.set("device_id", "ESP32_001")?;
+    kv.set("sample_rate", "1000")?;
+    
+    // Serialize to string for flash storage
+    let data = kv.to_data()?;
+    // flash_write(&data)?;
+    
+    // Load from serialized data
+    let mut kv2 = TinyKV::from_data(&data)?;
+    let device_id = kv2.get("device_id");
     
     Ok(())
 }
@@ -77,6 +109,8 @@ The file looks like this:
 - Application settings
 - Test data that needs persistence
 - Prototyping without database setup
+- Embedded systems and IoT devices
+- WASM applications
 
 **Not for:**
 - High-performance applications
@@ -84,15 +118,14 @@ The file looks like this:
 - Multi-user concurrent access
 - Large datasets
 
-## Comparison
+## Platform Support
+tinykv works across different environments:
 
-| | tinykv | sled | pickledb |
-|---|---|---|---|
-| Setup complexity | Zero | Low | Zero |
-| File format | Human-readable JSON | Binary | JSON |
-| TTL support | Yes | No | No |
-| Maintenance | Active | Stalled | Unmaintained |
-| Learning curve | Minutes | Hours | Minutes |
+- Desktop applications: Full features with file I/O, TTL, backups
+- Embedded systems: Memory-efficient with nanoserde serialization
+- WASM projects: Browser-compatible with minimal footprint
+- IoT devices: Ultra-minimal string-based storage
+
 
 ## API Documentation
 
