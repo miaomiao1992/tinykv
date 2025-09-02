@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>TinyKV WASM Demo</title>
+  </head>
+  <body>
+    <h1>TinyKV Test</h1>
+    <button onclick="testLocalStorage()">Test Set/Get</button>
+    <button onclick="testDelete()">Test Delete</button>
+    <button onclick="testClear()">Clear All</button>
+    <div id="output"></div>
+
+    <script type="module">
+      import init, { TinyKVWasm } from "./pkg/tinykv.js";
+
+      async function run() {
+        await init();
+        window.TinyKVWasm = TinyKVWasm;
+        window.kv = TinyKVWasm.openLocalStorage("myapp");
+        console.log("WASM loaded successfully!");
+      }
+      run();
+    </script>
+
+    <script>
+      function testLocalStorage() {
+        try {
+          kv.set("username", "hasan");
+          const user = kv.get("username");
+          document.getElementById("output").innerHTML = `User: ${user}`;
+        } catch (error) {
+          console.error("Error:", error);
+        }
+      }
+
+      function testDelete() {
+        try {
+          const deleted = kv.remove("username");
+          console.log("Deleted:", deleted);
+          console.log("After delete:", kv.get("username"));
+
+          document.getElementById("output").innerHTML = `Deleted: ${deleted}`;
+        } catch (error) {
+          console.error("Error:", error);
+        }
+      }
+
+      function testClear() {
+        try {
+          kv.clear();
+          document.getElementById("output").innerHTML = "All data cleared!";
+          console.log("LocalStorage:", localStorage.getItem("myapp:data"));
+        } catch (error) {
+          console.error("Error:", error);
+        }
+      }
+    </script>
+  </body>
+</html>

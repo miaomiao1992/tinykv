@@ -1,137 +1,214 @@
-# tinykv
-[![Crates.io](https://img.shields.io/crates/v/tinykv.svg)](https://crates.io/crates/tinykv)
-[![Downloads](https://img.shields.io/crates/d/tinykv.svg)](https://crates.io/crates/tinykv)
+# TinyKV
 
-A minimal file-backed key-value store for Rust with no_std support.
+A minimal JSON-based key-value store for Rust with TTL support and multi-platform compatibility.
 
-## Why I built this
+## Overview
 
-I was working on **Tazı** (named after the Turkish sighthound), a JS/TS test runner and Jest alternative, when I needed simple persistent storage for test configurations and app settings. 
-
-I tried existing solutions:
-- sled felt like overkill for storing simple config
-- pickledb looked good but seemed unmaintained  
-- Rolling my own JSON persistence was getting repetitive
-
-So I built tinykv - the simple KV store I wish existed. Turns out other Rust developers had the same problem.
+TinyKV provides a simple persistent key-value store that works across different Rust environments - from standard desktop applications to embedded systems and WebAssembly. Data is stored in human-readable JSON format with optional automatic expiration.
 
 ## Features
 
-- JSON file storage (human-readable, git-friendly)
-- Optional TTL (expiration) per key
-- Auto-save and backup options
-- Atomic writes (no corruption)
-- Simple serde integration
-- no_std support for embedded systems
-- Works in WASM environments
+- JSON file-based persistence with atomic writes
+- TTL (time-to-live) expiration for keys
+- Auto-save functionality
+- Backup support with .bak files
+- Multi-platform: std, no_std, and WebAssembly
+- Flexible serialization: serde or nanoserde
+- Thread-safe operations
 
-## Feature Flags
+## Installation
 
-- **default**: Uses `serde` for maximum compatibility
-- **std**: Enables standard library features (file I/O, TTL)
-- **nanoserde**: Uses `nanoserde` for smaller binaries and faster compilation
-
-## Usage
+Add to your `Cargo.toml`:
 
 ```toml
-# Default (std + serde)
-tinykv = "0.3"
+# Default configuration (std + serde)
+tinykv = "0.4"
 
-# Embedded systems (no_std + nanoserde)
-tinykv = { version = "0.3", default-features = false, features = ["nanoserde"] }
+# For embedded systems (no_std + nanoserde)
+tinykv = { version = "0.4", default-features = false, features = ["nanoserde"] }
 
-# Ultra-minimal (pure no_std)
-tinykv = { version = "0.3", default-features = false }
+# Minimal configuration (no_std only)
+tinykv = { version = "0.4", default-features = false }
+
+# WebAssembly support
+tinykv = { version = "0.4", features = ["wasm", "nanoserde"] }
 ```
 
-### Standard usage (with file I/O)
+## Quick Start
+
+### Basic Usage
 
 ```rust
 use tinykv::TinyKV;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut kv = TinyKV::open("settings.json")?
-        .with_auto_save();
-
-    kv.set("theme", "dark")?;
-    kv.set_with_ttl("session", "abc123", 3600)?; // 1 hour
-
-    let theme: String = kv.get("theme")?.unwrap_or("light".to_string());
-    println!("Using {} theme", theme);
+    // Create or open a store with namespace
+    let mut store = TinyKV::open("data.json")?
+        .with_auto_save()
+        .with_namespace("app1");
     
+    // Store some data (automatically prefixed with "app1:")
+    store.set("username", "alice")?;
+    store.set("count", 42)?;
+    
+    // Store with expiration (1 hour)
+    store.set_with_ttl("session_token", "abc123", 3600)?;
+    
+    // Retrieve data
+    let username: Option<String> = store.get("username")?;
+    let count: Option<i32> = store.get("count")?;
+    
+    // List keys (returns ["username", "count", "session_token"])
+    let keys = store.keys();
+    
+    println!("User: {:?}, Count: {:?}", username, count);
     Ok(())
 }
 ```
 
-The file looks like this:
-```json
-{
-  "theme": {
-    "value": "dark",
-    "expires_at": null
-  },
-  "session": {
-    "value": "abc123", 
-    "expires_at": 1721234567
-  }
-}
-```
-
-### Embedded/WASM usage (no_std)
+### Embedded Systems (no_std)
 
 ```rust
 #![no_std]
 extern crate alloc;
 use tinykv::TinyKV;
 
-fn embedded_main() -> Result<(), tinykv::TinyKVError> {
-    let mut kv = TinyKV::new(); // In-memory store
+fn main() -> Result<(), tinykv::TinyKVError> {
+    let mut store = TinyKV::new();
     
-    kv.set("device_id", "ESP32_001")?;
-    kv.set("sample_rate", "1000")?;
+    store.set("device_id", "ESP32_001")?;
+    store.set("config", "production")?;
     
-    // Serialize to string for flash storage
-    let data = kv.to_data()?;
-    // flash_write(&data)?;
+    // Serialize for external storage
+    let serialized = store.to_data()?;
     
-    // Load from serialized data
-    let mut kv2 = TinyKV::from_data(&data)?;
-    let device_id = kv2.get("device_id");
+    // Later, restore from serialized data
+    let restored_store = TinyKV::from_data(&serialized)?;
     
     Ok(())
 }
 ```
 
-## When to use tinykv
+### WebAssembly
 
-**Good for:**
-- CLI tool configuration
-- Game save files  
-- Application settings
-- Test data that needs persistence
-- Prototyping without database setup
-- Embedded systems and IoT devices
-- WASM applications
+```typescript
+import { TinyKVWasm } from 'tinykv';
 
-**Not for:**
-- High-performance applications
-- Complex queries or relationships
-- Multi-user concurrent access
-- Large datasets
+// Use browser localStorage
+const store = TinyKVWasm.openLocalStorage('myapp');
+store.set('theme', 'dark');
+store.setWithTtl('session', 'abc123', 3600); // 1 hour
 
-## Platform Support
-tinykv works across different environments:
+// Prefix operations
+const userKeys = store.listKeys('user:');     // ['user:123', 'user:456']
+const deleted = store.clearPrefix('temp:');   // returns count
+```
 
-- Desktop applications: Full features with file I/O, TTL, backups
-- Embedded systems: Memory-efficient with nanoserde serialization
-- WASM projects: Browser-compatible with minimal footprint
-- IoT devices: Ultra-minimal string-based storage
+**Note:** For optimal performance, serve WASM files with `Content-Type: application/wasm`. TinyKV will automatically fallback to slower instantiation if the MIME type is incorrect.
 
+## Data Format
 
-## API Documentation
+TinyKV stores data in a structured JSON format:
 
-https://docs.rs/tinykv
+```json
+{
+  "username": {
+    "value": "alice",
+    "expires_at": null
+  },
+  "session_token": {
+    "value": "abc123",
+    "expires_at": 1725300000
+  }
+}
+```
+
+## Feature Flags
+
+- `std` (default): Enables file I/O, TTL, and standard library features
+- `serde` (default): Uses serde for serialization (maximum compatibility)
+- `nanoserde`: Uses nanoserde for faster compilation and smaller binaries
+- `wasm`: Enables WebAssembly support with localStorage backend
+
+## API Reference
+
+### Core Methods
+
+- `TinyKV::open(path)` - Open or create file-based store
+- `TinyKV::new()` - Create in-memory store
+- `set(key, value)` - Store a value
+- `set_with_ttl(key, value, seconds)` - Store with expiration
+- `get(key)` - Retrieve a value
+- `remove(key)` - Delete a key
+- `contains_key(key)` - Check if key exists
+- `keys()` - List all keys
+- `list_keys(prefix)` - List keys with prefix
+- `clear()` - Remove all entries
+- `clear_prefix(prefix)` - Remove entries with prefix
+- `save()` - Manually save to disk
+
+### Configuration
+
+- `with_auto_save()` - Enable automatic saving
+- `with_backup(enabled)` - Enable/disable backup files  
+- `with_namespace(prefix)` - Set key namespace prefix
+- `purge_expired()` - Remove expired entries
+
+## Platform Compatibility
+
+| Platform | File I/O | TTL | Auto-save | Serialization |
+|----------|----------|-----|-----------|---------------|
+| std      | ✓        | ✓   | ✓         | serde/nanoserde |
+| no_std   | ✗        | ✗   | ✗         | nanoserde/manual |
+| WASM     | localStorage | ✓ | ✓       | nanoserde |
+
+## Use Cases
+
+**Ideal for:**
+- Application configuration files
+- Game save data
+- CLI tool settings
+- Test data persistence
+- Embedded device configuration
+- Browser-based applications
+- Rapid prototyping
+
+**Not recommended for:**
+- High-performance databases
+- Complex relational queries
+- Concurrent multi-user access
+- Large datasets (>100MB)
+
+## Documentation
+
+Full API documentation is available at [docs.rs/tinykv](https://docs.rs/tinykv).
+
+## Changelog
+
+### Version 0.4.0
+- **BREAKING**: WASM `setWithTtl` now accepts `number` instead of `bigint`
+- Added namespace support with `with_namespace(prefix)` method
+- Added prefix operations: `list_keys(prefix)` and `clear_prefix(prefix)`
+- Enhanced WASM bindings with `listKeys()` and `clearPrefix()` methods
+- Modernized package.json with `exports` field and `sideEffects: false`
+- Improved WASM performance documentation
+
+### Version 0.3.0
+- Enhanced no_std support
+- Updated documentation and examples
+- Improved JSON output formatting
+
+### Version 0.2.0
+- Added nanoserde support for minimal binary size
+- Improved compilation speed
+- Enhanced embedded systems compatibility
+
+### Version 0.1.0
+- Initial release
+- Core key-value operations with TTL
+- File-based JSON persistence
+- Auto-save and backup support
 
 ## License
 
-MIT License - see the full text in the repository.
+MIT License

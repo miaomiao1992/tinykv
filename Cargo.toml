@@ -1,6 +1,6 @@
 [package]
 name = "tinykv"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 authors = ["Hasan YILDIZ <info@hasanyildiz.net>"]
 description = "A simple, file-backed, human-readable key-value store with TTL support"
@@ -11,16 +11,21 @@ readme = "README.md"
 keywords = ["key-value", "storage", "json", "embedded", "simple"]
 categories = ["database", "data-structures", "filesystem", "config", "embedded"]
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 nanoserde = { version = "0.2.1", optional = true }
-serde = { version =  "1", features = ["derive"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
 
 [features]
 default = ["std", "serde"]
 std = []
-serde = ["dep:serde", "dep:serde_json", "std"]
+serde = ["dep:serde", "dep:serde_json"]
 nanoserde = ["dep:nanoserde"]
+wasm = ["dep:wasm-bindgen", "nanoserde"]
 
 [dev-dependencies]
 tempfile = "3.20.0"
